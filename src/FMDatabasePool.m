@@ -9,6 +9,14 @@
 #import "FMDatabasePool.h"
 #import "FMDatabase.h"
 
+@interface FMDatabasePool()
+
+- (void)pushDatabaseBackInPool:(FMDatabase*)db;
+- (FMDatabase*)db;
+
+@end
+
+
 @implementation FMDatabasePool
 @synthesize path=_path;
 @synthesize delegate=_delegate;
@@ -16,37 +24,37 @@
 
 
 + (id)databasePoolWithPath:(NSString*)aPath {
-    return [[[self alloc] initWithPath:aPath] autorelease];
+    return FMDBReturnAutoreleased([[self alloc] initWithPath:aPath]);
 }
 
 - (id)initWithPath:(NSString*)aPath {
-	
+    
     self = [super init];
     
-	if (self != nil) {
+    if (self != nil) {
         _path               = [aPath copy];
         _lockQueue          = dispatch_queue_create([[NSString stringWithFormat:@"fmdb.%@", self] UTF8String], NULL);
-        _databaseInPool     = [[NSMutableArray array] retain];
-        _databaseOutPool    = [[NSMutableArray array] retain];
-	}
+        _databaseInPool     = FMDBReturnRetained([NSMutableArray array]);
+        _databaseOutPool    = FMDBReturnRetained([NSMutableArray array]);
+    }
     
-	return self;
+    return self;
 }
 
 - (void)dealloc {
     
     _delegate = 0x00;
-    
-    [_path release];
-    [_databaseInPool release];
-    [_databaseOutPool release];
+    FMDBRelease(_path);
+    FMDBRelease(_databaseInPool);
+    FMDBRelease(_databaseOutPool);
     
     if (_lockQueue) {
         dispatch_release(_lockQueue);
         _lockQueue = 0x00;
     }
-    
+#if ! __has_feature(objc_arc)
     [super dealloc];
+#endif
 }
 
 
@@ -56,6 +64,10 @@
 
 - (void)pushDatabaseBackInPool:(FMDatabase*)db {
     
+    if (!db) { // db can be null if we set an upper bound on the # of databases to create.
+        return;
+    }
+    
     [self executeLocked:^() {
         
         if ([_databaseInPool containsObject:db]) {
@@ -64,8 +76,6 @@
         
         [_databaseInPool addObject:db];
         [_databaseOutPool removeObject:db];
-        
-        [db setPool:0x00];
         
     }];
 }
@@ -93,23 +103,25 @@
             }
             
             db = [FMDatabase databaseWithPath:_path];
-            
-            if ([db open]) {
-                if ([_delegate respondsToSelector:@selector(databasePool:shouldAddDatabaseToPool:)] && ![_delegate databasePool:self shouldAddDatabaseToPool:db]) {
-                    [db close];
-                    db = 0x00;
-                }
-                else {
+        }
+        
+        //This ensures that the db is opened before returning
+        if ([db open]) {
+            if ([_delegate respondsToSelector:@selector(databasePool:shouldAddDatabaseToPool:)] && ![_delegate databasePool:self shouldAddDatabaseToPool:db]) {
+                [db close];
+                db = 0x00;
+            }
+            else {
+                //It should not get added in the pool twice if lastObject was found
+                if (![_databaseOutPool containsObject:db]) {
                     [_databaseOutPool addObject:db];
                 }
             }
-            else {
-                NSLog(@"Could not open up the database at path %@", _path);
-                db = 0x00;
-            }
         }
-        
-        [db setPool:self];
+        else {
+            NSLog(@"Could not open up the database at path %@", _path);
+            db = 0x00;
+        }
     }];
     
     return db;
@@ -156,11 +168,11 @@
 
 - (void)inDatabase:(void (^)(FMDatabase *db))block {
     
-    FMDatabase *db = [[self db] popFromPool];
+    FMDatabase *db = [self db];
     
     block(db);
     
-    [db pushToPool];
+    [self pushDatabaseBackInPool:db];
 }
 
 - (void)beginTransaction:(BOOL)useDeferred withBlock:(void (^)(FMDatabase *db, BOOL *rollback))block {
@@ -185,6 +197,8 @@
     else {
         [db commit];
     }
+    
+    [self pushDatabaseBackInPool:db];
 }
 
 - (void)inDeferredTransaction:(void (^)(FMDatabase *db, BOOL *rollback))block {
@@ -208,6 +222,7 @@
     NSError *err = 0x00;
     
     if (![db startSavePointWithName:name error:&err]) {
+        [self pushDatabaseBackInPool:db];
         return err;
     }
     
@@ -219,6 +234,8 @@
     else {
         [db releaseSavePointWithName:name error:&err];
     }
+    
+    [self pushDatabaseBackInPool:db];
     
     return err;
 }

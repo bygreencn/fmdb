@@ -9,6 +9,23 @@
 #import <Foundation/Foundation.h>
 #import "sqlite3.h"
 
+/*
+
+                         ***README OR SUFFER***
+Before using FMDatabasePool, please consider using FMDatabaseQueue instead.
+
+If you really really really know what you're doing and FMDatabasePool is what
+you really really need (ie, you're using a read only database), OK you can use
+it.  But just be careful not to deadlock!
+
+For an example on deadlocking, search for:
+ONLY_USE_THE_POOL_IF_YOU_ARE_DOING_READS_OTHERWISE_YOULL_DEADLOCK_USE_FMDATABASEQUEUE_INSTEAD
+in the main.m file.
+
+*/
+
+
+
 @class FMDatabase;
 
 @interface FMDatabasePool : NSObject {
@@ -19,7 +36,7 @@
     NSMutableArray      *_databaseInPool;
     NSMutableArray      *_databaseOutPool;
     
-    id                  _delegate;
+    __unsafe_unretained id _delegate;
     
     NSUInteger          _maximumNumberOfDatabasesToCreate;
 }
@@ -30,9 +47,6 @@
 
 + (id)databasePoolWithPath:(NSString*)aPath;
 - (id)initWithPath:(NSString*)aPath;
-
-- (void)pushDatabaseBackInPool:(FMDatabase*)db;
-- (FMDatabase*)db;
 
 - (NSUInteger)countOfCheckedInDatabases;
 - (NSUInteger)countOfCheckedOutDatabases;

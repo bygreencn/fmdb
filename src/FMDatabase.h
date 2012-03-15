@@ -3,18 +3,31 @@
 #import "FMResultSet.h"
 #import "FMDatabasePool.h"
 
-#ifndef MAC_OS_X_VERSION_10_7
-#define MAC_OS_X_VERSION_10_7 1070
+
+#if ! __has_feature(objc_arc)
+    #define FMDBAutorelease(__v) ([__v autorelease]);
+    #define FMDBReturnAutoreleased FMDBAutorelease
+
+    #define FMDBRetain(__v) ([__v retain]);
+    #define FMDBReturnRetained FMDBRetain
+
+    #define FMDBRelease(__v) ([__v release]);
+#else
+    // -fobjc-arc
+    #define FMDBAutorelease(__v)
+    #define FMDBReturnAutoreleased(__v) (__v)
+
+    #define FMDBRetain(__v)
+    #define FMDBReturnRetained(__v) (__v)
+
+    #define FMDBRelease(__v)
 #endif
 
-#if MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_7
-    #define FMDB_USE_WEAK_POOL 1
-#endif
 
 @interface FMDatabase : NSObject  {
     
-	sqlite3*            _db;
-	NSString*           _databasePath;
+    sqlite3*            _db;
+    NSString*           _databasePath;
     BOOL                _logsErrors;
     BOOL                _crashOnErrors;
     BOOL                _traceExecution;
@@ -25,17 +38,9 @@
     int                 _busyRetryTimeout;
     
     NSMutableDictionary *_cachedStatements;
-	NSMutableSet        *_openResultSets;
+    NSMutableSet        *_openResultSets;
+    NSMutableSet        *_openFunctions;
 
-#ifdef FMDB_USE_WEAK_POOL
-    __weak FMDatabasePool *_poolAccessViaMethodOnly;
-#else
-    FMDatabasePool      *_poolAccessViaMethodOnly;
-#endif
-    
-    NSInteger           _poolPopCount;
-    
-    FMDatabasePool      *pool;
 }
 
 
@@ -58,6 +63,7 @@
 - (BOOL)goodConnection;
 - (void)clearCachedStatements;
 - (void)closeOpenResultSets;
+- (BOOL)hasOpenResultSets;
 
 // encryption methods.  You need to have purchased the sqlite encryption extensions for these to work.
 - (BOOL)setKey:(NSString*)key;
@@ -106,20 +112,14 @@
 
 - (int)changes;
 
-- (FMDatabase*)popFromPool;
-- (void)pushToPool;
-
-- (FMDatabasePool *)pool;
-- (void)setPool:(FMDatabasePool *)value;
-
-
+- (void)makeFunctionNamed:(NSString*)name maximumArguments:(int)count withBlock:(void (^)(sqlite3_context *context, int argc, sqlite3_value **argv))block;
 
 @end
 
 @interface FMStatement : NSObject {
-    sqlite3_stmt *statement;
-    NSString *query;
-    long useCount;
+    sqlite3_stmt *_statement;
+    NSString *_query;
+    long _useCount;
 }
 
 @property (assign) long useCount;
