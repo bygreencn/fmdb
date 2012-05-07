@@ -117,6 +117,48 @@ int main (int argc, const char * argv[]) {
     // the autorelease pool closes, so sqlite will complain about it.
     [rs close];  
     
+    FMDBQuickCheck(![db hasOpenResultSets]);
+    
+    [db executeUpdate:@"create table ull (a integer)"];
+    
+    [db executeUpdate:@"insert into ull (a) values (?)" , [NSNumber numberWithUnsignedLongLong:ULLONG_MAX]];
+    
+    rs = [db executeQuery:@"select  a from ull"];
+    while ([rs next]) {
+        unsigned long long a = [rs unsignedLongLongIntForColumnIndex:0];
+        unsigned long long b = [rs unsignedLongLongIntForColumn:@"a"];
+        
+        FMDBQuickCheck(a == ULLONG_MAX);
+        FMDBQuickCheck(b == ULLONG_MAX);
+    }
+    
+    
+    // check case sensitive result dictionary.
+    [db executeUpdate:@"create table cs (aRowName integer, bRowName text)"];
+    FMDBQuickCheck(![db hadError]);
+    [db executeUpdate:@"insert into cs (aRowName, bRowName) values (?, ?)" , [NSNumber numberWithBool:1], @"hello"];
+    FMDBQuickCheck(![db hadError]);
+    
+    rs = [db executeQuery:@"select * from cs"];
+    while ([rs next]) {
+        NSDictionary *d = [rs resultDictionary];
+        
+        FMDBQuickCheck([d objectForKey:@"aRowName"]);
+        FMDBQuickCheck(![d objectForKey:@"arowname"]);
+        FMDBQuickCheck([d objectForKey:@"bRowName"]);
+        FMDBQuickCheck(![d objectForKey:@"browname"]);
+    }
+    
+    
+    // check funky table names + getTableSchema
+    [db executeUpdate:@"create table '234 fds' (foo text)"];
+    FMDBQuickCheck(![db hadError]);
+    rs = [db getTableSchema:@"234 fds"];
+    FMDBQuickCheck([rs next]);
+    [rs close];
+    
+    
+    
     // ----------------------------------------------------------------------------------------
     // blob support.
     [db executeUpdate:@"create table blobTable (a text, b blob)"];
@@ -490,7 +532,7 @@ int main (int argc, const char * argv[]) {
         FMDBQuickCheck([db executeUpdate:@"create table t5 (a text, b int, c blob, d text, e text)"]);
         FMDBQuickCheck(([db executeUpdateWithFormat:@"insert into t5 values (%s, %d, %@, %c, %lld)", "text", 42, @"BLOB", 'd', 12345678901234]));
         
-        rs = [db executeQueryWithFormat:@"select * from t5 where a = %s", "text"];
+        rs = [db executeQueryWithFormat:@"select * from t5 where a = %s and a = %@ and b = %d", "text", @"text", 42];
         FMDBQuickCheck((rs != nil));
         
         [rs next];
@@ -542,6 +584,26 @@ int main (int argc, const char * argv[]) {
     {
         NSError *err;
         FMDBQuickCheck(([db update:@"insert into t5 values (?, ?, ?, ?, ?)" withErrorAndBindings:&err, @"text", [NSNumber numberWithInt:42], @"BLOB", @"d", [NSNumber numberWithInt:0]]));
+        
+    }
+    
+    
+    // test attach for the heck of it.
+    {
+        
+        //FMDatabase *dbA = [FMDatabase databaseWithPath:dbPath];
+        [fileManager removeItemAtPath:@"/tmp/attachme.db" error:nil];
+        FMDatabase *dbB = [FMDatabase databaseWithPath:@"/tmp/attachme.db"];
+        FMDBQuickCheck([dbB open]);
+        FMDBQuickCheck([dbB executeUpdate:@"create table attached (a text)"]);
+        FMDBQuickCheck(([dbB executeUpdate:@"insert into attached values (?)", @"test"]));
+        FMDBQuickCheck([dbB close]);
+        
+        [db executeUpdate:@"attach database '/tmp/attachme.db' as attack"];
+        
+        rs = [db executeQuery:@"select * from attack.attached"];
+        FMDBQuickCheck([rs next]);
+        [rs close];
         
     }
     
@@ -735,6 +797,8 @@ int main (int argc, const char * argv[]) {
             while ([rs next]) {
                 rowCount++;
             }
+            
+            FMDBQuickCheck(![db hasOpenResultSets]);
             
             NSLog(@"after rollback, rowCount is %d (should be 2)", rowCount);
             
